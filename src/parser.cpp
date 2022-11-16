@@ -8,10 +8,12 @@ char curTok;
 
 std::map<char, int> binOpPrecedence;
 
-LLVMContext theContext;
-IRBuilder<> Builder(theContext);
+std::unique_ptr<LLVMContext> theContext;
+std::unique_ptr<IRBuilder<>> Builder;
 std::unique_ptr<Module> theModule;
-std::map<std::string, Value *> namedValues;
+std::map<llvm::StringRef, Value *> namedValues;
+
+GenerateCode codeGenerator;
 
 std::unique_ptr<ExprAST> parseNumberExpr();
 std::unique_ptr<ExprAST> parseParenExpr();
@@ -203,10 +205,12 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 	}
 
 	std::vector<std::unique_ptr<ExprAST>> argNames;
+	std::vector<std::string> argString;
 
 	while (getNextToken() == tok_identifier)
 	{
 		argNames.push_back(std::move(std::make_unique<VariableExprAST>(identifierStr)));
+		argString.push_back(identifierStr);
 	}
 
 	if (curTok != ')')
@@ -215,7 +219,7 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 	}
 	getNextToken();
 
-	return std::make_unique<PrototypeAST>(fnName, std::move(argNames)); // fixed this????? does it work????
+	return std::make_unique<PrototypeAST>(fnName, std::move(argNames), std::move(argString)); // fixed this????? does it work????
 }
 
 std::unique_ptr<FunctionAST> parseDefinition()
@@ -247,7 +251,7 @@ std::unique_ptr<FunctionAST> parseTopLvlExpr()
 {
 	if (auto exp = std::move(parseExpression()))
 	{
-		auto proto = std::make_unique<PrototypeAST>("", std::move(std::vector<std::unique_ptr<ExprAST>>()));
+		auto proto = std::make_unique<PrototypeAST>("", std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
 		return std::make_unique<FunctionAST>(std::move(proto), std::move(exp));
 	}
 
@@ -262,7 +266,7 @@ Value* logErrorV(const char* str)
 
 Value* GenerateCode::codegen(NumberExprAST* a)
 {
-	return ConstantFP::get(theContext, APFloat(a->val));
+	return ConstantFP::get(*theContext, APFloat(a->val));
 }
 
 Value* GenerateCode::codegen(VariableExprAST* a)
@@ -289,14 +293,14 @@ Value* GenerateCode::codegen(BinaryExprAST* a)
 	switch(a->op)
 	{
 		case '+':
-			return Builder.CreateFAdd(L, R, "addtmp");
+			return Builder->CreateFAdd(L, R, "addtmp");
 		case '-':
-			return Builder.CreateFSub(L, R, "subtemp");
+			return Builder->CreateFSub(L, R, "subtemp");
 		case '*':
-			return Builder.CreateFMul(L, R, "multemp");
+			return Builder->CreateFMul(L, R, "multemp");
 		case '<':
-			L = Builder.CreateFCmpULT(L, R, "cmptmp");
-			return Builder.CreateUIToFP(L, Type::getDoubleTy(theContext), "booltmp");
+			L = Builder->CreateFCmpULT(L, R, "cmptmp");
+			return Builder->CreateUIToFP(L, Type::getDoubleTy(*theContext), "booltmp");
 		default:
 			return logErrorV("Invalid binary operator");
 	}
@@ -325,14 +329,14 @@ Value* GenerateCode::codegen(CallExprAST* a)
 		}
 	}
 
-	return Builder.CreateCall(calleeF, argsV, "calltmp");
+	return Builder->CreateCall(calleeF, argsV, "calltmp");
 }
 
 Function* GenerateCode::Codegen(PrototypeAST* a)
 {
-	std::vector<Type*> doubles(a->args.size(), Type::getDoubleTy(theContext));
+	std::vector<Type*> doubles(a->args.size(), Type::getDoubleTy(*theContext));
 	
-	FunctionType *FT = FunctionType::get(Type::getDoubleTy(theContext), doubles, false);
+	FunctionType *FT = FunctionType::get(Type::getDoubleTy(*theContext), doubles, false);
 
 	Function *F = Function::Create(FT, Function::ExternalLinkage, a->name, theModule.get());
 
@@ -340,7 +344,7 @@ Function* GenerateCode::Codegen(PrototypeAST* a)
 	for(auto &arg : F->args())
 	{
 		//Setting name of arguments to make IR more readable - may need to change the PrototypeAST (change std::unique_ptr<ExprAST> to std::string - but might break something else :((())))
-		//arg.setName((std::string)a->args[idx++]);
+		arg.setName(a->argString[idx++]);
 	}
 
 	return F;
@@ -365,9 +369,18 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 		return (Function*)logErrorV("Function cannot be redefined");
 	}
 
+	BasicBlock *BB = BasicBlock::Create(*theContext, "entry:", theFunction);
+	Builder->SetInsertPoint(BB);
+
+	namedValues.clear();
+	for(auto &arg : theFunction->args())
+	{
+		namedValues[arg.getName()] = &arg;
+	}
+
 	if(Value *retVal = a->body->codegen(this))
 	{
-		Builder.CreateRet(retVal);
+		Builder->CreateRet(retVal);
 
 		verifyFunction(*theFunction);
 
@@ -382,3 +395,65 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 
 
 //Driver Code:: (Until I figure out how to share the llvm::Context with other files)
+
+void initialiseModule()
+{
+	theContext = std::make_unique<LLVMContext>();
+	theModule = std::make_unique<Module>("FirstLang", *theContext);
+	Builder = std::make_unique<IRBuilder<>>(*theContext);
+}
+
+bool genDefinition()
+{
+	if(auto fnAST = parseDefinition())
+	{
+		if(auto *fnIR = fnAST->Codegen(&codeGenerator))
+		{
+			fprintf(stderr, "Read function definition:\n");
+			fnIR->print(errs());
+			fprintf(stderr, "\n");
+		}
+		return true;
+	}
+
+	return false;
+}
+
+bool genExtern()
+{
+	if(auto protoAST = parseExtern())
+	{
+		if(auto *fnIR = protoAST->Codegen(&codeGenerator))
+		{
+			fprintf(stderr, "Read extern function:\n");
+			fnIR->print(errs());
+			fprintf(stderr, "\n");
+		}
+		return true;
+	}
+
+	return false;
+}
+
+bool genTopLvlExpr()
+{
+	if(auto fnAST = parseTopLvlExpr())
+	{
+		if(auto *fnIR = fnAST->Codegen(&codeGenerator))
+		{
+			fprintf(stderr, "Read top-level expression:\n");
+			fnIR->print(errs());
+			fprintf(stderr, "\n");
+
+			fnIR->eraseFromParent();
+		}
+		return true;
+	}
+
+	return false;
+}
+
+void printALL()
+{
+	theModule->print(errs(), nullptr);
+}

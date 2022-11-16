@@ -62,7 +62,7 @@ class NumberExprAST : public ExprAST
 	double val;
 
 	public:
-	NumberExprAST(double Val) : val(val) {}
+	NumberExprAST(double val) : val(val) {}
 	Value* codegen(GenerateCode* codeGenerator) override
 	{
 		return codeGenerator->codegen(this);
@@ -115,9 +115,10 @@ class PrototypeAST : public ExprAST
 	public:
 	std::string name;
 	std::vector<std::unique_ptr<ExprAST>> args;
+	std::vector<std::string> argString;
 
 	public:
-	PrototypeAST(const std::string &name, std::vector<std::unique_ptr<ExprAST>> args) : name(name), args(std::move(args)) {}
+	PrototypeAST(const std::string &name, std::vector<std::unique_ptr<ExprAST>> args, std::vector<std::string> argString) : name(name), args(std::move(args)), argString(std::move(argString)) {}
 	const std::string getName() const
 	{
 		return name;

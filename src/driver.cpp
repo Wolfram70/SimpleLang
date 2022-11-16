@@ -5,13 +5,15 @@ extern std::unique_ptr<FunctionAST> parseDefinition();
 extern std::unique_ptr<PrototypeAST> parseExtern();
 extern std::unique_ptr<FunctionAST> parseTopLvlExpr();
 
+extern void initialiseModule();
+extern bool genDefinition();
+extern bool genExtern();
+extern bool genTopLvlExpr();
+extern void printALL();
+
 static void handleDefinition()
 {
-	if(parseDefinition())
-	{
-		fprintf(stderr, "Parsed a function definition \n");
-	}
-	else
+	if(!genDefinition())
 	{
 		getNextToken();
 	}
@@ -19,11 +21,7 @@ static void handleDefinition()
 
 static void handleExtern()
 {
-	if(parseExtern())
-	{
-		fprintf(stderr, "Parsed an external function \n");
-	}
-	else
+	if(!genExtern())
 	{
 		getNextToken();
 	}
@@ -31,11 +29,7 @@ static void handleExtern()
 
 static void handleTopLvlExpr()
 {
-	if(parseTopLvlExpr())
-	{
-		fprintf(stderr, "Parsed a top level expression \n");
-	}
-	else
+	if(!genTopLvlExpr())
 	{
 		getNextToken();
 	}
@@ -83,7 +77,11 @@ int main()
 	fprintf(stderr, "Ready>>");
 	getNextToken();
 
+	initialiseModule();
+
 	mainLoop();
+
+	printALL();
 
 	return 0;
 }
