@@ -1,6 +1,7 @@
 #include <cstdio>
 
 #include "../include/parser.h"
+#include "../include/JIT.h"
 
 extern int getToken();
 
@@ -11,9 +12,15 @@ std::map<char, int> binOpPrecedence;
 std::unique_ptr<LLVMContext> theContext;
 std::unique_ptr<IRBuilder<>> Builder;
 std::unique_ptr<Module> theModule;
+std::unique_ptr<legacy::FunctionPassManager> theFPM;
+std::unique_ptr<llvm::orc::SimpleJIT> theJIT;
 std::map<llvm::StringRef, Value *> namedValues;
+std::map<std::string, std::unique_ptr<PrototypeAST>> functionProtos;
+ExitOnError exitOnErr;
 
 GenerateCode codeGenerator;
+
+int tempResolveTopLvlExpr = 0;
 
 std::unique_ptr<ExprAST> parseNumberExpr();
 std::unique_ptr<ExprAST> parseParenExpr();
@@ -251,8 +258,26 @@ std::unique_ptr<FunctionAST> parseTopLvlExpr()
 {
 	if (auto exp = std::move(parseExpression()))
 	{
-		auto proto = std::make_unique<PrototypeAST>("", std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
+		auto proto = std::make_unique<PrototypeAST>("__anon_expr" + std::to_string(tempResolveTopLvlExpr++), std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
 		return std::make_unique<FunctionAST>(std::move(proto), std::move(exp));
+	}
+
+	return nullptr;
+}
+
+//CODE GENERATION:
+
+Function* getFunction(std::string name)
+{
+	if(auto *F = theModule->getFunction(name))
+	{
+		return F;
+	}
+
+	auto FI = functionProtos.find(name);
+	if(FI != functionProtos.end())
+	{
+		FI->second->Codegen(&codeGenerator);
 	}
 
 	return nullptr;
@@ -308,7 +333,8 @@ Value* GenerateCode::codegen(BinaryExprAST* a)
 
 Value* GenerateCode::codegen(CallExprAST* a)
 {
-	Function *calleeF = theModule->getFunction(a->callee);
+	Function *calleeF = getFunction(a->callee);
+	// Function *calleeF = theModule->getFunction(a->callee);
 	if(!calleeF)
 	{
 		return logErrorV("Unknown function referenced");
@@ -352,6 +378,10 @@ Function* GenerateCode::Codegen(PrototypeAST* a)
 
 Function* GenerateCode::Codegen(FunctionAST* a)
 {
+	// auto &p = *(a->proto);
+	// functionProtos[a->proto->getName()] = std::move(a->proto);
+	// Function *theFunction = getFunction(p.getName());
+
 	Function *theFunction = theModule->getFunction(a->proto->getName());
 
 	if(!theFunction)
@@ -384,6 +414,8 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 
 		verifyFunction(*theFunction);
 
+		theFPM->run(*theFunction);
+
 		return theFunction;
 	}
 
@@ -396,11 +428,29 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 
 //Driver Code:: (Until I figure out how to share the llvm::Context with other files)
 
+void initialiseJIT()
+{
+	InitializeNativeTarget();
+	InitializeNativeTargetAsmPrinter();
+  	InitializeNativeTargetAsmParser();
+	theJIT = exitOnErr(llvm::orc::SimpleJIT::create());
+}
+
 void initialiseModule()
 {
 	theContext = std::make_unique<LLVMContext>();
 	theModule = std::make_unique<Module>("FirstLang", *theContext);
+	theModule->setDataLayout(theJIT->getDataLayout());
 	Builder = std::make_unique<IRBuilder<>>(*theContext);
+
+	theFPM = std::make_unique<legacy::FunctionPassManager>(theModule.get());
+
+	theFPM->add(createInstructionCombiningPass());
+	theFPM->add(createReassociatePass());
+	theFPM->add(createGVNPass());
+	theFPM->add(createCFGSimplificationPass());
+
+	theFPM->doInitialization();
 }
 
 bool genDefinition()
@@ -412,6 +462,10 @@ bool genDefinition()
 			fprintf(stderr, "Read function definition:\n");
 			fnIR->print(errs());
 			fprintf(stderr, "\n");
+			// auto RT = theJIT->getMainJITDylib().createResourceTracker();
+			// auto TSM = llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext));
+			// exitOnErr(theJIT->addModule(std::move(TSM), RT));
+			// initialiseModule();
 		}
 		return true;
 	}
@@ -428,6 +482,7 @@ bool genExtern()
 			fprintf(stderr, "Read extern function:\n");
 			fnIR->print(errs());
 			fprintf(stderr, "\n");
+			// functionProtos[protoAST->getName()] = std::move(protoAST);
 		}
 		return true;
 	}
@@ -445,7 +500,19 @@ bool genTopLvlExpr()
 			fnIR->print(errs());
 			fprintf(stderr, "\n");
 
-			fnIR->eraseFromParent();
+			auto RT = theJIT->getMainJITDylib().createResourceTracker();
+			auto TSM = llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext));
+			exitOnErr(theJIT->addModule(std::move(TSM), RT));
+
+			initialiseModule();
+
+			auto exprSymbol = exitOnErr(theJIT->lookup("__anon_expr" + std::to_string(tempResolveTopLvlExpr - 1)));
+			assert(exprSymbol && "Function not found.");
+
+			double (*FP)() = (double (*)())(intptr_t)exprSymbol.getAddress(); //casting a function to the right type to call it natively
+			fprintf(stderr, "Evaluated to %f\n", FP());
+
+			// exitOnErr(RT->remove());
 		}
 		return true;
 	}

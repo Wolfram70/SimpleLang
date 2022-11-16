@@ -10,6 +10,7 @@ extern bool genDefinition();
 extern bool genExtern();
 extern bool genTopLvlExpr();
 extern void printALL();
+extern void initialiseJIT();
 
 static void handleDefinition()
 {
@@ -44,7 +45,7 @@ static void mainLoop()
 			case tok_eof:
 				return;
 			case ';':
-				fprintf(stderr, "Ready>>");
+				fprintf(stderr, "Ready>>");	
 				getNextToken();
 				break;
 			case tok_def:
@@ -53,10 +54,10 @@ static void mainLoop()
 			case tok_extern:
 				handleExtern();
 				break;
-			case tok_identifier:
+			case tok_number:
 				handleTopLvlExpr();
 				break;
-			case tok_number:
+			case tok_identifier:
 				handleTopLvlExpr();
 				break;
 			default:
@@ -65,6 +66,24 @@ static void mainLoop()
 				break;
 		}
 	}
+}
+
+#ifdef _WIN32
+#define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT
+#endif
+
+/// putchard - putchar that takes a double and returns 0.
+extern "C" DLLEXPORT double putchard(double X) {
+  fputc((char)X, stderr);
+  return 0;
+}
+
+/// printd - printf that takes a double prints it as "%f\n", returning 0.
+extern "C" DLLEXPORT double printd(double X) {
+  fprintf(stderr, "%f\n", X);
+  return 0;
 }
 
 int main()
@@ -77,6 +96,7 @@ int main()
 	fprintf(stderr, "Ready>>");
 	getNextToken();
 
+	initialiseJIT();
 	initialiseModule();
 
 	mainLoop();
