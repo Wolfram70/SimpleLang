@@ -258,7 +258,7 @@ std::unique_ptr<FunctionAST> parseTopLvlExpr()
 {
 	if (auto exp = std::move(parseExpression()))
 	{
-		auto proto = std::make_unique<PrototypeAST>("__anon_expr" + std::to_string(tempResolveTopLvlExpr++), std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
+		auto proto = std::make_unique<PrototypeAST>("__anon_expr", std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
 		return std::make_unique<FunctionAST>(std::move(proto), std::move(exp));
 	}
 
@@ -277,7 +277,7 @@ Function* getFunction(std::string name)
 	auto FI = functionProtos.find(name);
 	if(FI != functionProtos.end())
 	{
-		FI->second->Codegen(&codeGenerator);
+		return FI->second->Codegen(&codeGenerator);
 	}
 
 	return nullptr;
@@ -378,26 +378,26 @@ Function* GenerateCode::Codegen(PrototypeAST* a)
 
 Function* GenerateCode::Codegen(FunctionAST* a)
 {
-	// auto &p = *(a->proto);
-	// functionProtos[a->proto->getName()] = std::move(a->proto);
-	// Function *theFunction = getFunction(p.getName());
+	auto &p = *(a->proto);
+	functionProtos[a->proto->getName()] = std::move(a->proto);
+	Function *theFunction = getFunction(p.getName());
 
-	Function *theFunction = theModule->getFunction(a->proto->getName());
+	// Function *theFunction = theModule->getFunction(a->proto->getName());
 
-	if(!theFunction)
-	{
-		theFunction = a->proto->Codegen(this);
-	}
+	// if(!theFunction)
+	// {
+	// 	theFunction = a->proto->Codegen(this);
+	// }
 
 	if(!theFunction)
 	{
 		return nullptr;
 	}
 
-	if(!theFunction->empty())
-	{
-		return (Function*)logErrorV("Function cannot be redefined");
-	}
+	// if(!theFunction->empty())
+	// {
+	// 	return (Function*)logErrorV("Function cannot be redefined");
+	// }
 
 	BasicBlock *BB = BasicBlock::Create(*theContext, "entry:", theFunction);
 	Builder->SetInsertPoint(BB);
@@ -462,10 +462,8 @@ bool genDefinition()
 			fprintf(stderr, "Read function definition:\n");
 			fnIR->print(errs());
 			fprintf(stderr, "\n");
-			// auto RT = theJIT->getMainJITDylib().createResourceTracker();
-			// auto TSM = llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext));
-			// exitOnErr(theJIT->addModule(std::move(TSM), RT));
-			// initialiseModule();
+			exitOnErr(theJIT->addModule(llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext))));
+			initialiseModule();
 		}
 		return true;
 	}
@@ -482,7 +480,7 @@ bool genExtern()
 			fprintf(stderr, "Read extern function:\n");
 			fnIR->print(errs());
 			fprintf(stderr, "\n");
-			// functionProtos[protoAST->getName()] = std::move(protoAST);
+			functionProtos[protoAST->getName()] = std::move(protoAST);
 		}
 		return true;
 	}
@@ -506,13 +504,13 @@ bool genTopLvlExpr()
 
 			initialiseModule();
 
-			auto exprSymbol = exitOnErr(theJIT->lookup("__anon_expr" + std::to_string(tempResolveTopLvlExpr - 1)));
-			assert(exprSymbol && "Function not found.");
+			auto exprSymbol = exitOnErr(theJIT->lookup("__anon_expr"));
+			// assert(exprSymbol && "Function not found.");
 
 			double (*FP)() = (double (*)())(intptr_t)exprSymbol.getAddress(); //casting a function to the right type to call it natively
 			fprintf(stderr, "Evaluated to %f\n", FP());
 
-			// exitOnErr(RT->remove());
+			exitOnErr(RT->remove());
 		}
 		return true;
 	}
