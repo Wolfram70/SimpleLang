@@ -46,6 +46,22 @@ extern int getToken()
 		{
 			return tok_else;
 		}
+		else if(identifierStr == "for" || identifierStr == "FOR")
+		{
+			return tok_for;
+		}
+		else if(identifierStr == "when" || identifierStr == "WHEN")
+		{
+			return tok_when;
+		}
+		else if(identifierStr == "inc" || identifierStr == "INC")
+		{
+			return tok_inc;
+		}
+		else if(identifierStr == "do" || identifierStr == "DO")
+		{
+			return tok_do;
+		}
 		else
 		{
 			return tok_identifier;

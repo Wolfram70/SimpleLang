@@ -33,6 +33,7 @@ std::unique_ptr<FunctionAST> parseDefinition();
 std::unique_ptr<PrototypeAST> parseExtern();
 std::unique_ptr<FunctionAST> parseTopLvlExpr();
 std::unique_ptr<IfExprAST> parseIfExpr();
+std::unique_ptr<ExprAST> parseForExpr();
 
 int getNextToken()
 {
@@ -90,9 +91,77 @@ std::unique_ptr<ExprAST> parsePrimary()
 		return std::move(parseParenExpr());
 	case tok_if:
 		return std::move(parseIfExpr());
+	case tok_for:
+		return std::move(parseForExpr());
 	default:
 		return logError("Unknown token when expecting an expression");
 	}
+}
+
+std::unique_ptr<ExprAST> parseForExpr()
+{
+	getNextToken();
+
+	if(curTok != tok_identifier)
+	{
+		logError("Expected a variable name after for");
+		return nullptr;
+	}
+
+	std::string idName = identifierStr;
+	getNextToken();
+
+	if(curTok != '=')
+	{
+		logError("Expected an '=' after for");
+		return nullptr;
+	}
+	getNextToken();
+
+	auto start = parseExpression();
+	if(!start)
+	{
+		return nullptr;
+	}
+
+	if(curTok != tok_when)
+	{
+		logError("Expected when after for");
+		return nullptr;
+	}
+	getNextToken();
+
+	auto cond = parseExpression();
+	if(!cond)
+	{
+		return nullptr;
+	}
+
+	std::unique_ptr<ExprAST> step;
+	if(curTok == tok_inc)
+	{
+		getNextToken();
+		step = parseExpression();
+		if(!step)
+		{
+			return nullptr;
+		}
+	}
+
+	if(curTok != tok_do)
+	{
+		logError("Expected do after for");
+		return nullptr;
+	}
+	getNextToken();
+
+	auto body = parseExpression();
+	if(!body)
+	{
+		return nullptr;
+	}
+
+	return std::make_unique<ForExprAST>(idName, std::move(start), std::move(cond), std::move(step), std::move(body));
 }
 
 int getTokPrecedence()
@@ -474,6 +543,77 @@ Value* GenerateCode::codegen(IfExprAST* a)
 	return PN;
 }
 
+Value* GenerateCode::codegen(ForExprAST* a)
+{
+	Value* startVal = a->start->codegen(this);
+	if(!startVal)
+	{
+		return nullptr;
+	}
+
+	Function *theFunction = Builder->GetInsertBlock()->getParent();
+	BasicBlock *preHeaderBB = Builder->GetInsertBlock();
+	BasicBlock *loopBB = BasicBlock::Create(*theContext, "loop", theFunction);
+
+	Builder->CreateBr(loopBB);
+	Builder->SetInsertPoint(loopBB);
+
+	PHINode *variable = Builder->CreatePHI(Type::getDoubleTy(*theContext), 2, a->varName.c_str());
+	
+	variable->addIncoming(startVal, preHeaderBB);
+
+	Value *oldVal = namedValues[a->varName];
+	namedValues[a->varName] = variable;
+
+	if(!a->body->codegen(this))
+	{
+		return nullptr;
+	}
+
+	Value *stepVal = nullptr;
+	if(a->step)
+	{
+		stepVal = a->step->codegen(this);
+		if(!stepVal)
+		{
+			return nullptr;
+		}
+	}
+	else
+	{
+		stepVal = ConstantFP::get(*theContext, APFloat(1.0));
+	}
+
+	Value *nextVar = Builder->CreateFAdd(variable, stepVal, "nextvar");
+
+	Value *endCond = a->cond->codegen(this);
+	if(!endCond)
+	{
+		return nullptr;
+	}
+
+	endCond = Builder->CreateFCmpONE(endCond, ConstantFP::get(*theContext, APFloat(0.0)), "loopcond");
+
+	BasicBlock *loopEndBB = Builder->GetInsertBlock();
+	BasicBlock *afterBB = BasicBlock::Create(*theContext, "afterloop", theFunction);
+
+	Builder->CreateCondBr(endCond, loopBB, afterBB);
+	Builder->SetInsertPoint(afterBB);
+
+	variable->addIncoming(nextVar, loopEndBB);
+
+	if(oldVal)
+	{
+		namedValues[a->varName] = oldVal;
+	}
+	else
+	{
+		namedValues.erase(a->varName);
+	}
+
+	return Constant::getNullValue(Type::getDoubleTy(*theContext));
+}
+
 Function* GenerateCode::Codegen(PrototypeAST* a)
 {
 	std::vector<Type*> doubles(a->args.size(), Type::getDoubleTy(*theContext));
@@ -577,6 +717,7 @@ bool genDefinition()
 		{
 			fprintf(stderr, "Read function definition:\n");
 			fnIR->print(errs());
+			// fnIR->viewCFG();
 			fprintf(stderr, "\n");
 			exitOnErr(theJIT->addModule(llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext))));
 			initialiseModule();
