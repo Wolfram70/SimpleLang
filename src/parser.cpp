@@ -32,6 +32,7 @@ std::unique_ptr<PrototypeAST> parseProtoype();
 std::unique_ptr<FunctionAST> parseDefinition();
 std::unique_ptr<PrototypeAST> parseExtern();
 std::unique_ptr<FunctionAST> parseTopLvlExpr();
+std::unique_ptr<IfExprAST> parseIfExpr();
 
 int getNextToken()
 {
@@ -87,6 +88,8 @@ std::unique_ptr<ExprAST> parsePrimary()
 		return std::move(parseNumberExpr());
 	case '(':
 		return std::move(parseParenExpr());
+	case tok_if:
+		return std::move(parseIfExpr());
 	default:
 		return logError("Unknown token when expecting an expression");
 	}
@@ -196,6 +199,45 @@ std::unique_ptr<ExprAST> parseIdentifierExpr()
 	return std::make_unique<CallExprAST>(idName, std::move(args));
 }
 
+std::unique_ptr<IfExprAST> parseIfExpr()
+{
+	getNextToken();
+
+	auto cond = parseExpression();
+	if(!cond)
+	{
+		return nullptr;
+	}
+
+	if(curTok != tok_then)
+	{
+		logError("Expected then");
+		return nullptr;
+	}
+	getNextToken();
+
+	auto then = parseExpression();
+	if(!then)
+	{
+		return nullptr;
+	}
+
+	if(curTok != tok_else)
+	{
+		logError("Expected else");
+		return nullptr;
+	}
+	getNextToken();
+
+	auto _else = parseExpression();
+	if(!_else)
+	{
+		return nullptr;
+	}
+
+	return std::make_unique<IfExprAST>(std::move(cond), std::move(then), std::move(_else));
+}
+
 std::unique_ptr<PrototypeAST> parseProtoype()
 {
 	if (curTok != tok_identifier)
@@ -279,8 +321,10 @@ Function* getFunction(std::string name)
 	{
 		return FI->second->Codegen(&codeGenerator);
 	}
-
-	return nullptr;
+	else
+	{
+		return nullptr;
+	}
 }
 
 Value* logErrorV(const char* str)
@@ -356,6 +400,60 @@ Value* GenerateCode::codegen(CallExprAST* a)
 	}
 
 	return Builder->CreateCall(calleeF, argsV, "calltmp");
+}
+
+Value* GenerateCode::codegen(IfExprAST* a)
+{
+	Value *condV = a->cond->codegen(this);
+	if(!condV)
+	{
+		return nullptr;
+	}
+
+	condV = Builder->CreateFCmpONE(condV, ConstantFP::get(*theContext, APFloat(0.0)), "ifcond");
+
+	Function *theFunction = Builder->GetInsertBlock()->getParent();
+
+	BasicBlock *thenBB = BasicBlock::Create(*theContext, "then", theFunction);
+	BasicBlock *elseBB = BasicBlock::Create(*theContext, "else");
+	BasicBlock *mergeBB = BasicBlock::Create(*theContext, "ifcont");
+
+	Builder->CreateCondBr(condV, thenBB, elseBB);
+
+	Builder->SetInsertPoint(thenBB);
+
+	Value *thenV = a->then->codegen(this);
+	if(!thenV)
+	{
+		return nullptr;
+	}
+
+	Builder->CreateBr(mergeBB);
+
+	thenBB = Builder->GetInsertBlock();
+
+	theFunction->getBasicBlockList().push_back(elseBB);
+	Builder->SetInsertPoint(elseBB);
+
+	Value *elseV = a->_else->codegen(this);
+	if(!elseV)
+	{
+		return nullptr;
+	}
+
+	Builder->CreateBr(mergeBB);
+
+	elseBB = Builder->GetInsertBlock();
+
+	theFunction->getBasicBlockList().push_back(mergeBB);
+	Builder->SetInsertPoint(mergeBB);
+
+	PHINode *PN = Builder->CreatePHI(Type::getDoubleTy(*theContext), 2, "iftmp");
+
+	PN->addIncoming(thenV, thenBB);
+	PN->addIncoming(elseV, elseBB);
+
+	return PN;
 }
 
 Function* GenerateCode::Codegen(PrototypeAST* a)
@@ -445,10 +543,10 @@ void initialiseModule()
 
 	theFPM = std::make_unique<legacy::FunctionPassManager>(theModule.get());
 
-	theFPM->add(createInstructionCombiningPass());
-	theFPM->add(createReassociatePass());
-	theFPM->add(createGVNPass());
-	theFPM->add(createCFGSimplificationPass());
+	// theFPM->add(createInstructionCombiningPass());
+	// theFPM->add(createReassociatePass());
+	// theFPM->add(createGVNPass());
+	// theFPM->add(createCFGSimplificationPass());
 
 	theFPM->doInitialization();
 }
