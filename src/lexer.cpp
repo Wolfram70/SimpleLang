@@ -26,13 +26,25 @@ extern int getToken()
 			identifierStr.push_back(lastChar);
 		}
 
-		if(identifierStr == "def")
+		if(identifierStr == "def" || identifierStr == "DEF")
 		{
 			return tok_def;
 		}
-		else if(identifierStr == "extern")
+		else if(identifierStr == "extern" || identifierStr == "EXTERN")
 		{
 			return tok_extern;
+		}
+		else if(identifierStr == "if" || identifierStr == "IF")
+		{
+			return tok_if;
+		}
+		else if(identifierStr == "then" || identifierStr == "THEN")
+		{
+			return tok_then;
+		}
+		else if(identifierStr == "else" || identifierStr == "ELSE")
+		{
+			return tok_else;
 		}
 		else
 		{
