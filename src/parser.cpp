@@ -203,7 +203,13 @@ std::unique_ptr<IfExprAST> parseIfExpr()
 {
 	getNextToken();
 
-	auto cond = parseExpression();
+	if(curTok != '(')
+	{
+		logError("Expected '(' after if");
+		return nullptr;
+	}
+
+	auto cond = parseParenExpr();
 	if(!cond)
 	{
 		return nullptr;
@@ -216,7 +222,13 @@ std::unique_ptr<IfExprAST> parseIfExpr()
 	}
 	getNextToken();
 
-	auto then = parseExpression();
+	if(curTok != '(')
+	{
+		logError("Expected '(' after then");
+		return nullptr;
+	}
+
+	auto then = parseParenExpr();
 	if(!then)
 	{
 		return nullptr;
@@ -229,7 +241,13 @@ std::unique_ptr<IfExprAST> parseIfExpr()
 	}
 	getNextToken();
 
-	auto _else = parseExpression();
+	if(curTok != '(')
+	{
+		logError("Expected '(' after else");
+		return nullptr;
+	}
+
+	auto _else = parseParenExpr();
 	if(!_else)
 	{
 		return nullptr;
