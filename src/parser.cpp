@@ -543,10 +543,10 @@ void initialiseModule()
 
 	theFPM = std::make_unique<legacy::FunctionPassManager>(theModule.get());
 
-	// theFPM->add(createInstructionCombiningPass());
-	// theFPM->add(createReassociatePass());
-	// theFPM->add(createGVNPass());
-	// theFPM->add(createCFGSimplificationPass());
+	theFPM->add(createInstructionCombiningPass());
+	theFPM->add(createReassociatePass());
+	theFPM->add(createGVNPass());
+	theFPM->add(createCFGSimplificationPass());
 
 	theFPM->doInitialization();
 }
