@@ -327,13 +327,43 @@ std::unique_ptr<IfExprAST> parseIfExpr()
 
 std::unique_ptr<PrototypeAST> parseProtoype()
 {
-	if (curTok != tok_identifier)
-	{
-		return logErrorP("Expected function name in prototype");
-	}
+	std::string fnName;
 
-	std::string fnName = identifierStr;
-	getNextToken();
+	unsigned kind = 0;
+	unsigned binaryPrecedence = 30;
+
+	switch(curTok)
+	{
+		default:
+			return logErrorP("Expected function name in prototype");
+			break;
+		case tok_identifier:
+			fnName = identifierStr;
+			kind = 0;
+			getNextToken();
+			break;
+		case tok_binary:
+			getNextToken();
+			if(!isascii(curTok))
+			{
+				return logErrorP("Expected binary operator");
+			}
+			fnName = "binary";
+			fnName.push_back(curTok);
+			kind = 2;
+			getNextToken();
+
+			if(curTok == tok_number)
+			{
+				if(numVal < 1 || numVal > 100)
+				{
+					return logErrorP("Precedence must be from 1 to 100");
+				}
+				binaryPrecedence = (unsigned)numVal;
+				getNextToken();
+			}
+			break;
+	}
 
 	if (curTok != '(')
 	{
@@ -355,7 +385,12 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 	}
 	getNextToken();
 
-	return std::make_unique<PrototypeAST>(fnName, std::move(argNames), std::move(argString)); // fixed this????? does it work????
+	if(kind && (argNames.size() != kind))
+	{
+		return logErrorP("Invalid number of operands for an operator");
+	}
+
+	return std::make_unique<PrototypeAST>(fnName, std::move(argNames), std::move(argString), kind != 0, binaryPrecedence);
 }
 
 std::unique_ptr<FunctionAST> parseDefinition()
@@ -458,8 +493,14 @@ Value* GenerateCode::codegen(BinaryExprAST* a)
 			L = Builder->CreateFCmpULT(L, R, "cmptmp");
 			return Builder->CreateUIToFP(L, Type::getDoubleTy(*theContext), "booltmp");
 		default:
-			return logErrorV("Invalid binary operator");
+			break;
 	}
+
+	Function *F = getFunction(std::string("binary") + a->op);
+	assert(F && "Binary operator not found");
+
+	Value *ops[2] = {L, R};
+	return Builder->CreateCall(F, ops, "binop");
 }
 
 Value* GenerateCode::codegen(CallExprAST* a)
@@ -648,6 +689,11 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 	if(!theFunction)
 	{
 		return nullptr;
+	}
+
+	if(p.isBinaryOp())
+	{
+		binOpPrecedence[p.getName()[p.name.size() - 1]] = p.precedence;
 	}
 
 	// if(!theFunction->empty())

@@ -14,6 +14,8 @@ enum Token
 	tok_when = -10,
 	tok_inc = -11,
 	tok_do = -12,
+	tok_binary = -13,
+	tok_unary = -14,
 };
 
 extern double numVal;

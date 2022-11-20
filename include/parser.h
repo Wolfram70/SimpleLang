@@ -127,9 +127,12 @@ class PrototypeAST : public ExprAST
 	std::string name;
 	std::vector<std::unique_ptr<ExprAST>> args;
 	std::vector<std::string> argString;
+	bool isOperator;
+	unsigned precedence;
 
 	public:
-	PrototypeAST(const std::string &name, std::vector<std::unique_ptr<ExprAST>> args, std::vector<std::string> argString) : name(name), args(std::move(args)), argString(std::move(argString)) {}
+	PrototypeAST(const std::string &name, std::vector<std::unique_ptr<ExprAST>> args, std::vector<std::string> argString, bool isOperator = false, unsigned precedence = 0)
+	: name(name), args(std::move(args)), argString(std::move(argString)), isOperator(isOperator), precedence(precedence) {}
 	const std::string getName() const
 	{
 		return name;
@@ -137,6 +140,14 @@ class PrototypeAST : public ExprAST
 	Function* Codegen(GenerateCode* codeGenerator) override
 	{
 		return codeGenerator->Codegen(this);
+	}
+	bool isUnaryOp()
+	{
+		return (isOperator && (args.size() == 1));
+	}
+	bool isBinaryOp()
+	{
+		return (isOperator && (args.size() == 2));
 	}
 };
 
