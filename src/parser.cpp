@@ -31,6 +31,7 @@ std::unique_ptr<ExprAST> parseIdentifierExpr();
 std::unique_ptr<PrototypeAST> parseProtoype();
 std::unique_ptr<FunctionAST> parseDefinition();
 std::unique_ptr<PrototypeAST> parseExtern();
+std::unique_ptr<ExprAST> parseUnaryExpr();
 std::unique_ptr<FunctionAST> parseTopLvlExpr();
 std::unique_ptr<IfExprAST> parseIfExpr();
 std::unique_ptr<ExprAST> parseForExpr();
@@ -98,6 +99,23 @@ std::unique_ptr<ExprAST> parsePrimary()
 	}
 }
 
+std::unique_ptr<ExprAST> parseUnaryExpr()
+{
+	if(!isascii(curTok) || curTok == '(' || curTok == ',')
+	{
+		return parsePrimary();
+	}
+
+	int opc = curTok;
+	getNextToken();
+
+	if(auto operand = parseUnaryExpr())
+	{
+		return std::make_unique<UnaryExprAST>(opc, std::move(operand));
+	}
+	return nullptr;
+}
+
 std::unique_ptr<ExprAST> parseForExpr()
 {
 	getNextToken();
@@ -155,7 +173,12 @@ std::unique_ptr<ExprAST> parseForExpr()
 	}
 	getNextToken();
 
-	auto body = parseExpression();
+	if(curTok != '(')
+	{
+		logError("Expected '(' after for ... ");
+	}
+
+	auto body = parseParenExpr();
 	if(!body)
 	{
 		return nullptr;
@@ -195,7 +218,7 @@ std::unique_ptr<ExprAST> parseBinOpRHS(int exprPrec, std::unique_ptr<ExprAST> LH
 		int binOp = curTok;
 		getNextToken();
 
-		auto RHS = parsePrimary();
+		auto RHS = parseUnaryExpr();
 
 		if (!RHS)
 		{
@@ -220,7 +243,7 @@ std::unique_ptr<ExprAST> parseBinOpRHS(int exprPrec, std::unique_ptr<ExprAST> LH
 
 std::unique_ptr<ExprAST> parseExpression()
 {
-	auto LHS = std::move(parsePrimary());
+	auto LHS = std::move(parseUnaryExpr());
 
 	if (!LHS)
 	{
@@ -363,6 +386,16 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 				getNextToken();
 			}
 			break;
+		case tok_unary:
+			getNextToken();
+			if(!isascii(curTok))
+			{
+				return logErrorP("Expected unary operator");
+			}
+			fnName = "unary";
+			fnName.push_back(curTok);
+			kind = 1;
+			getNextToken();
 	}
 
 	if (curTok != '(')
@@ -501,6 +534,23 @@ Value* GenerateCode::codegen(BinaryExprAST* a)
 
 	Value *ops[2] = {L, R};
 	return Builder->CreateCall(F, ops, "binop");
+}
+
+Value* GenerateCode::codegen(UnaryExprAST* a)
+{
+	Value* operandV = a->operand->codegen(this);
+	if(!operandV)
+	{
+		return nullptr;
+	}
+
+	Function *F = getFunction(std::string("unary") + a->op);
+	if(!F)
+	{
+		return logErrorV("Unknown unary operator");
+	}
+	
+	return Builder->CreateCall(F, operandV, "unop");
 }
 
 Value* GenerateCode::codegen(CallExprAST* a)

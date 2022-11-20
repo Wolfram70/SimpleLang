@@ -38,6 +38,7 @@ class ExprAST;
 class NumberExprAST;
 class VariableExprAST;
 class BinaryExprAST;
+class UnaryExprAST;
 class CallExprAST;
 class PrototypeAST;
 class FunctionAST;
@@ -52,6 +53,7 @@ class GenerateCode
 	Value* codegen(VariableExprAST*);
 	Value* codegen(ExprAST*);
 	Value* codegen(BinaryExprAST*);
+	Value* codegen(UnaryExprAST*);
 	Value* codegen(CallExprAST*);
 	Value* codegen(IfExprAST*);
 	Value* codegen(ForExprAST*);
@@ -101,6 +103,20 @@ class BinaryExprAST : public ExprAST
 
 	public:
 	BinaryExprAST(char op, std::unique_ptr<ExprAST> LHS, std::unique_ptr<ExprAST> RHS) : op(op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
+	Value* codegen(GenerateCode* codeGenerator) override
+	{
+		return codeGenerator->codegen(this);
+	}
+};
+
+class UnaryExprAST : public ExprAST
+{
+	public:
+	char op;
+	std::unique_ptr<ExprAST> operand;
+
+	public:
+	UnaryExprAST(char op, std::unique_ptr<ExprAST> operand) : op(op), operand(std::move(operand)) {}
 	Value* codegen(GenerateCode* codeGenerator) override
 	{
 		return codeGenerator->codegen(this);
