@@ -70,6 +70,14 @@ extern int getToken()
 		{
 			return tok_unary;
 		}
+		else if(identifierStr == "var" || identifierStr == "VAR")
+		{
+			return tok_var;
+		}
+		else if(identifierStr == "in" || identifierStr == "IN")
+		{
+			return tok_in;
+		}
 		else
 		{
 			return tok_identifier;

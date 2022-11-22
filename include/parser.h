@@ -38,6 +38,7 @@ using namespace llvm;
 class ExprAST;
 class NumberExprAST;
 class VariableExprAST;
+class VarExprAST;
 class BinaryExprAST;
 class UnaryExprAST;
 class CallExprAST;
@@ -52,6 +53,7 @@ class GenerateCode
 	public:
 	Value* codegen(NumberExprAST*);
 	Value* codegen(VariableExprAST*);
+	Value* codegen(VarExprAST*);
 	Value* codegen(ExprAST*);
 	Value* codegen(BinaryExprAST*);
 	Value* codegen(UnaryExprAST*);
@@ -90,6 +92,20 @@ class VariableExprAST : public ExprAST
 
 	public:
 	VariableExprAST(const std::string &name) : name(name) {}
+	Value* codegen(GenerateCode* codeGenerator) override
+	{
+		return codeGenerator->codegen(this);
+	}
+};
+
+class VarExprAST : public ExprAST
+{
+	public:
+	std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> vars;
+	std::unique_ptr<ExprAST> body;
+
+	public:
+	VarExprAST(std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> vars, std::unique_ptr<ExprAST> body) : vars(std::move(vars)), body(std::move(body)) {}
 	Value* codegen(GenerateCode* codeGenerator) override
 	{
 		return codeGenerator->codegen(this);

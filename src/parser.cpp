@@ -33,8 +33,9 @@ std::unique_ptr<FunctionAST> parseDefinition();
 std::unique_ptr<PrototypeAST> parseExtern();
 std::unique_ptr<ExprAST> parseUnaryExpr();
 std::unique_ptr<FunctionAST> parseTopLvlExpr();
-std::unique_ptr<IfExprAST> parseIfExpr();
+std::unique_ptr<ExprAST> parseIfExpr();
 std::unique_ptr<ExprAST> parseForExpr();
+std::unique_ptr<ExprAST> parseVarExpr();
 
 AllocaInst* createEntryBlockAlloca(Function* theFunction, llvm::StringRef varName);
 
@@ -96,6 +97,8 @@ std::unique_ptr<ExprAST> parsePrimary()
 		return std::move(parseIfExpr());
 	case tok_for:
 		return std::move(parseForExpr());
+	case tok_var:
+		return std::move(parseVarExpr());
 	default:
 		return logError("Unknown token when expecting an expression");
 	}
@@ -187,6 +190,69 @@ std::unique_ptr<ExprAST> parseForExpr()
 	}
 
 	return std::make_unique<ForExprAST>(idName, std::move(start), std::move(cond), std::move(step), std::move(body));
+}
+
+std::unique_ptr<ExprAST> parseVarExpr()
+{
+	getNextToken();
+
+	std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> vars;
+
+	if(curTok != tok_identifier)
+	{
+		return logError("Expected identifier after var");
+	}
+
+	while(true)
+	{
+		std::string name = identifierStr;
+		getNextToken();
+
+		std::unique_ptr<ExprAST> init;
+		if(curTok == '=')
+		{
+			getNextToken();
+
+			init = parseExpression();
+			if(!init)
+			{
+				return nullptr;
+			}
+		}
+
+		vars.push_back(std::make_pair(name, std::move(init)));
+
+		if(curTok != ',')
+		{
+			break;
+		}
+
+		getNextToken();
+
+		if(curTok != tok_identifier)
+		{
+			return logError("Expected identifier after var");
+		}
+	}
+
+	if(curTok != tok_in)
+	{
+		return logError("Expected in after var");
+	}
+	getNextToken();
+
+	if(curTok != '(')
+	{
+		return logError("Expected '(' after var ... in");
+	}
+
+	auto body = parseParenExpr();
+	if(!body)
+	{
+		return nullptr;
+	}
+
+	return std::make_unique<VarExprAST>(std::move(vars), std::move(body));
 }
 
 int getTokPrecedence()
@@ -285,6 +351,13 @@ std::unique_ptr<ExprAST> parseIdentifierExpr()
 			{
 				break;
 			}
+
+			if(curTok != ',')
+			{
+				return logError("Expected ',' after an argument in function call");
+			}
+
+			getNextToken();
 		}
 	}
 
@@ -293,17 +366,11 @@ std::unique_ptr<ExprAST> parseIdentifierExpr()
 	return std::make_unique<CallExprAST>(idName, std::move(args));
 }
 
-std::unique_ptr<IfExprAST> parseIfExpr()
+std::unique_ptr<ExprAST> parseIfExpr()
 {
 	getNextToken();
 
-	if(curTok != '(')
-	{
-		logError("Expected '(' after if");
-		return nullptr;
-	}
-
-	auto cond = parseParenExpr();
+	auto cond = parseExpression();
 	if(!cond)
 	{
 		return nullptr;
@@ -408,10 +475,22 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 	std::vector<std::unique_ptr<ExprAST>> argNames;
 	std::vector<std::string> argString;
 
-	while (getNextToken() == tok_identifier)
+	int tok = getNextToken();
+
+	while (tok == tok_identifier)
 	{
 		argNames.push_back(std::move(std::make_unique<VariableExprAST>(identifierStr)));
 		argString.push_back(identifierStr);
+
+		tok = getNextToken();
+		if(tok != ')')
+		{
+			if(tok != ',')
+			{
+				return logErrorP("Expected comma after formal argument in function definition");
+			}
+			tok = getNextToken();
+		}
 	}
 
 	if (curTok != ')')
@@ -752,6 +831,53 @@ Value* GenerateCode::codegen(ForExprAST* a)
 	}
 
 	return Constant::getNullValue(Type::getDoubleTy(*theContext));
+}
+
+Value* GenerateCode::codegen(VarExprAST* a)
+{
+	std::vector<AllocaInst*> oldBindings;
+
+	Function *theFunction = Builder->GetInsertBlock()->getParent();
+
+	for(int i = 0; i < a->vars.size(); i++)
+	{
+		std::string varName = a->vars[i].first;
+		ExprAST *init = a->vars[i].second.get();
+		Value *initVal;
+
+		if(init)
+		{
+			initVal = init->codegen(this);
+			if(!initVal)
+			{
+				return nullptr;
+			}
+		}
+		else
+		{
+			initVal = ConstantFP::get(*theContext, APFloat(0.0));
+		}
+
+		AllocaInst *alloca = createEntryBlockAlloca(theFunction, llvm::StringRef(varName));
+		Builder->CreateStore(initVal, alloca);
+
+		oldBindings.push_back(namedValues[llvm::StringRef(varName)]);
+
+		namedValues[llvm::StringRef(varName)] = alloca;
+	}
+
+	Value *bodyVal = a->body->codegen(this);
+	if(!bodyVal)
+	{
+		return nullptr;
+	}
+
+	for(int i = 0; i < a->vars.size(); i++)
+	{
+		namedValues[llvm::StringRef(a->vars[i].first)] = oldBindings[i];
+	}
+
+	return bodyVal;
 }
 
 Function* GenerateCode::Codegen(PrototypeAST* a)
