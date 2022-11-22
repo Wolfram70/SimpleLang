@@ -14,7 +14,7 @@ std::unique_ptr<IRBuilder<>> Builder;
 std::unique_ptr<Module> theModule;
 std::unique_ptr<legacy::FunctionPassManager> theFPM;
 std::unique_ptr<llvm::orc::SimpleJIT> theJIT;
-std::map<llvm::StringRef, Value *> namedValues;
+std::map<llvm::StringRef, AllocaInst*> namedValues;
 std::map<std::string, std::unique_ptr<PrototypeAST>> functionProtos;
 ExitOnError exitOnErr;
 
@@ -35,6 +35,8 @@ std::unique_ptr<ExprAST> parseUnaryExpr();
 std::unique_ptr<FunctionAST> parseTopLvlExpr();
 std::unique_ptr<IfExprAST> parseIfExpr();
 std::unique_ptr<ExprAST> parseForExpr();
+
+AllocaInst* createEntryBlockAlloca(Function* theFunction, llvm::StringRef varName);
 
 int getNextToken()
 {
@@ -464,6 +466,13 @@ std::unique_ptr<FunctionAST> parseTopLvlExpr()
 
 //CODE GENERATION:
 
+AllocaInst* createEntryBlockAlloca(Function* theFunction, llvm::StringRef varName)
+{
+	IRBuilder<> tmpB(&theFunction->getEntryBlock(), theFunction->getEntryBlock().begin());
+
+	return tmpB.CreateAlloca(Type::getDoubleTy(*theContext), 0, varName);
+}
+
 Function* getFunction(std::string name)
 {
 	if(auto *F = theModule->getFunction(name))
@@ -495,13 +504,13 @@ Value* GenerateCode::codegen(NumberExprAST* a)
 
 Value* GenerateCode::codegen(VariableExprAST* a)
 {
-	Value* V = namedValues[a->name];
-	if(!V)
+	AllocaInst* A = namedValues[a->name];
+	if(!A)
 	{
 		logErrorV("Unknown variable name.");
 		return nullptr;
 	}
-	return V;
+	return Builder->CreateLoad(A->getAllocatedType(), A, a->name.c_str());
 }
 
 Value* GenerateCode::codegen(BinaryExprAST* a)
@@ -646,15 +655,19 @@ Value* GenerateCode::codegen(ForExprAST* a)
 	BasicBlock *preHeaderBB = Builder->GetInsertBlock();
 	BasicBlock *loopBB = BasicBlock::Create(*theContext, "loop", theFunction);
 
+	AllocaInst* alloca = createEntryBlockAlloca(theFunction, llvm::StringRef(a->varName));
+
+	Builder->CreateStore(startVal, alloca);
+
 	Builder->CreateBr(loopBB);
 	Builder->SetInsertPoint(loopBB);
 
-	PHINode *variable = Builder->CreatePHI(Type::getDoubleTy(*theContext), 2, a->varName.c_str());
+	// PHINode *variable = Builder->CreatePHI(Type::getDoubleTy(*theContext), 2, a->varName.c_str());
 	
-	variable->addIncoming(startVal, preHeaderBB);
+	// variable->addIncoming(startVal, preHeaderBB);
 
-	Value *oldVal = namedValues[a->varName];
-	namedValues[a->varName] = variable;
+	AllocaInst *oldVal = namedValues[a->varName];
+	namedValues[a->varName] = alloca;
 
 	if(!a->body->codegen(this))
 	{
@@ -675,7 +688,9 @@ Value* GenerateCode::codegen(ForExprAST* a)
 		stepVal = ConstantFP::get(*theContext, APFloat(1.0));
 	}
 
-	Value *nextVar = Builder->CreateFAdd(variable, stepVal, "nextvar");
+	Value *curVar = Builder->CreateLoad(alloca->getAllocatedType(), alloca, a->varName.c_str());
+	Value *nextVar = Builder->CreateFAdd(curVar, stepVal, "nextvar");
+	Builder->CreateStore(nextVar, alloca);
 
 	Value *endCond = a->cond->codegen(this);
 	if(!endCond)
@@ -690,8 +705,6 @@ Value* GenerateCode::codegen(ForExprAST* a)
 
 	Builder->CreateCondBr(endCond, loopBB, afterBB);
 	Builder->SetInsertPoint(afterBB);
-
-	variable->addIncoming(nextVar, loopEndBB);
 
 	if(oldVal)
 	{
@@ -757,7 +770,9 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 	namedValues.clear();
 	for(auto &arg : theFunction->args())
 	{
-		namedValues[arg.getName()] = &arg;
+		AllocaInst* alloca = createEntryBlockAlloca(theFunction, llvm::StringRef(arg.getName()));
+		Builder->CreateStore(&arg, alloca);
+		namedValues[arg.getName()] = alloca;
 	}
 
 	if(Value *retVal = a->body->codegen(this))
