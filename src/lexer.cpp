@@ -26,7 +26,7 @@ extern int getToken()
 			identifierStr.push_back(lastChar);
 		}
 
-		if (identifierStr == "def" || identifierStr == "DEF")
+		if (identifierStr == "def" || identifierStr == "DEF" || identifierStr == "define")
 		{
 			return tok_def;
 		}

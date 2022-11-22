@@ -88,6 +88,8 @@ extern "C" DLLEXPORT double printd(double X) {
 
 int main()
 {
+	binOpPrecedence[':'] = 1;
+	binOpPrecedence['='] = 2;
 	binOpPrecedence['<'] = 10;
 	binOpPrecedence['+'] = 20;
 	binOpPrecedence['-'] = 20;

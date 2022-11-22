@@ -515,6 +515,42 @@ Value* GenerateCode::codegen(VariableExprAST* a)
 
 Value* GenerateCode::codegen(BinaryExprAST* a)
 {
+	if(a->op == ':')
+	{
+		Value* L = a->LHS->codegen(this);
+		if(!L)
+		{
+			return nullptr;
+		}
+
+		return a->RHS->codegen(this);
+	}
+	if(a->op == '=')
+	{
+		VariableExprAST *LHSe = static_cast<VariableExprAST*>(a->LHS.get());
+		if(!LHSe)
+		{
+			return logErrorV("LHS of '=' must be a variable");
+		}
+
+		Value *val = a->RHS->codegen(this);
+		if(!val)
+		{
+			return nullptr;
+		}
+
+		AllocaInst* variable = namedValues[LHSe->name];
+
+		if(!variable)
+		{
+			return logErrorV("Unknown variable name");
+		}
+
+		Builder->CreateStore(val, variable);
+
+		return val;
+	}
+
 	Value* L = a->LHS->codegen(this);
 	Value* R = a->RHS->codegen(this);
 
@@ -816,6 +852,7 @@ void initialiseModule()
 	theFPM->add(createReassociatePass());
 	theFPM->add(createGVNPass());
 	theFPM->add(createCFGSimplificationPass());
+	theFPM->add(createPromoteMemoryToRegisterPass());
 
 	theFPM->doInitialization();
 }
