@@ -86,6 +86,11 @@ extern "C" DLLEXPORT double printd(double X) {
   return 0;
 }
 
+extern "C" DLLEXPORT double clear() {
+	printf("\e[1;1H\e[2J");
+	return 0;
+}
+
 int main()
 {
 	binOpPrecedence[':'] = 1;
