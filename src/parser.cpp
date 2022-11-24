@@ -974,8 +974,7 @@ void initialiseModule()
 	theFPM->add(createReassociatePass());
 	theFPM->add(createGVNPass());
 	theFPM->add(createCFGSimplificationPass());
-	theFPM->add(createPromoteMemoryToRegisterPass());
-
+  theFPM->add(createPromoteMemoryToRegisterPass());
 	theFPM->doInitialization();
 }
 
