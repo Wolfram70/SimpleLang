@@ -761,8 +761,7 @@ Value* GenerateCode::codegen(ForExprAST* a)
 
 	Function *theFunction = Builder->GetInsertBlock()->getParent();
 	BasicBlock *preHeaderBB = Builder->GetInsertBlock();
-	BasicBlock *loopBB = BasicBlock::Create(*theContext, "loop", theFunction);
-
+	
 	AllocaInst* alloca = createEntryBlockAlloca(theFunction, a->varName);
 
 	Value* startVal = a->start->codegen(this);
@@ -773,22 +772,36 @@ Value* GenerateCode::codegen(ForExprAST* a)
 
 	Builder->CreateStore(startVal, alloca);
 
-	Builder->CreateBr(loopBB);
+  AllocaInst *oldVal = namedValues[a->varName];
+	namedValues[a->varName] = alloca;
+
+  BasicBlock *startCondition = BasicBlock::Create(*theContext, "startcond", theFunction);
+  Builder->CreateBr(startCondition);
+
+  Builder->SetInsertPoint(startCondition);
+
+  Value *startCond = a->cond->codegen(this);
+	if(!startCond)
+	{
+		return nullptr;
+	}
+	startCond = Builder->CreateFCmpONE(startCond, ConstantFP::get(*theContext, APFloat(0.0)), "startcond");
+
+  BasicBlock *loopBB = BasicBlock::Create(*theContext, "loop", theFunction);
+
+	//Builder->CreateBr(loopBB);
 	Builder->SetInsertPoint(loopBB);
 
 	// PHINode *variable = Builder->CreatePHI(Type::getDoubleTy(*theContext), 2, a->varName.c_str());
 	
 	// variable->addIncoming(startVal, preHeaderBB);
 
-	AllocaInst *oldVal = namedValues[a->varName];
-	namedValues[a->varName] = alloca;
-
 	if(!a->body->codegen(this))
 	{
 		return nullptr;
 	}
-
-	Value *stepVal = nullptr;
+  
+  Value *stepVal = nullptr;
 	if(a->step)
 	{
 		stepVal = a->step->codegen(this);
@@ -804,20 +817,15 @@ Value* GenerateCode::codegen(ForExprAST* a)
 
 	Value *curVar = Builder->CreateLoad(alloca->getAllocatedType(), alloca, a->varName.c_str());
 	Value *nextVar = Builder->CreateFAdd(curVar, stepVal, "nextvar");
+
 	Builder->CreateStore(nextVar, alloca);
-
-	Value *endCond = a->cond->codegen(this);
-	if(!endCond)
-	{
-		return nullptr;
-	}
-
-	endCond = Builder->CreateFCmpONE(endCond, ConstantFP::get(*theContext, APFloat(0.0)), "loopcond");
-
 	BasicBlock *loopEndBB = Builder->GetInsertBlock();
-	BasicBlock *afterBB = BasicBlock::Create(*theContext, "afterloop", theFunction);
+  Builder->CreateBr(startCondition);
 
-	Builder->CreateCondBr(endCond, loopBB, afterBB);
+	BasicBlock *afterBB = BasicBlock::Create(*theContext, "afterloop", theFunction);
+  
+  Builder->SetInsertPoint(startCondition);
+  Builder->CreateCondBr(startCond, loopBB, afterBB);
 	Builder->SetInsertPoint(afterBB);
 
 	if(oldVal)
