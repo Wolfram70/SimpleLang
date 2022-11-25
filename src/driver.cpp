@@ -10,7 +10,7 @@ extern bool genDefinition();
 extern bool genExtern();
 extern bool genTopLvlExpr();
 extern void printALL();
-extern void initialiseJIT();
+extern void initialize();
 
 static void handleDefinition()
 {
@@ -103,12 +103,11 @@ int main()
 	fprintf(stderr, "Ready>>");
 	getNextToken();
 
-	initialiseJIT();
 	initialiseModule();
 
 	mainLoop();
 
-	printALL();
+  initialize();
 
 	return 0;
 }

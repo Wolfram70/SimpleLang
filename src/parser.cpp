@@ -961,19 +961,64 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 
 //Driver Code:: (Until I figure out how to share the llvm::Context with other files)
 
-void initialiseJIT()
+void initialize()
 {
-	InitializeNativeTarget();
-	InitializeNativeTargetAsmPrinter();
-  	InitializeNativeTargetAsmParser();
-	theJIT = exitOnErr(llvm::orc::SimpleJIT::create());
+	InitializeAllTargetInfos();
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmParsers();
+  InitializeAllAsmPrinters();
+
+  auto TargetTriple = sys::getDefaultTargetTriple();
+  theModule->setTargetTriple(TargetTriple);
+
+  std::string Error;
+  auto Target = TargetRegistry::lookupTarget(TargetTriple, Error);
+
+  if(!Target)
+  {
+    errs() << Error;
+    return;
+  }
+
+  auto CPU = "generic";
+  auto Features = "";
+
+  TargetOptions opt;
+  auto RM = Optional<Reloc::Model>();
+  auto theTargetMachine = Target->createTargetMachine(TargetTriple, CPU, Features, opt, RM);
+
+  theModule->setDataLayout(theTargetMachine->createDataLayout());
+
+  auto Filename  = "output.o";
+  std::error_code EC;
+  raw_fd_ostream dest(Filename ,EC, sys::fs::OF_None);
+
+  if(EC)
+  {
+    errs() << "Could not open file: " << EC.message();
+    return;
+  }
+
+  legacy::PassManager pass;
+  auto Filetype = CGFT_ObjectFile;
+
+  if(theTargetMachine->addPassesToEmitFile(pass, dest, nullptr, Filetype))
+  {
+    errs() << "TargetMachine cannot emit a file of this type";
+    return;
+  }
+
+  pass.run(*theModule);
+  dest.flush();
+
+  outs() << "Wrote "<< Filename << "\n";
 }
 
 void initialiseModule()
 {
 	theContext = std::make_unique<LLVMContext>();
 	theModule = std::make_unique<Module>("FirstLang", *theContext);
-	theModule->setDataLayout(theJIT->getDataLayout());
 	Builder = std::make_unique<IRBuilder<>>(*theContext);
 
 	theFPM = std::make_unique<legacy::FunctionPassManager>(theModule.get());
@@ -996,8 +1041,6 @@ bool genDefinition()
 			fnIR->print(errs());
 			// fnIR->viewCFG();
 			fprintf(stderr, "\n");
-			exitOnErr(theJIT->addModule(llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext))));
-			initialiseModule();
 		}
 		return true;
 	}
@@ -1031,20 +1074,6 @@ bool genTopLvlExpr()
 			fprintf(stderr, "Read top-level expression:\n");
 			fnIR->print(errs());
 			fprintf(stderr, "\n");
-
-			auto RT = theJIT->getMainJITDylib().createResourceTracker();
-			auto TSM = llvm::orc::ThreadSafeModule(std::move(theModule), std::move(theContext));
-			exitOnErr(theJIT->addModule(std::move(TSM), RT));
-
-			initialiseModule();
-
-			auto exprSymbol = exitOnErr(theJIT->lookup("__anon_expr"));
-			// assert(exprSymbol && "Function not found.");
-
-			double (*FP)() = (double (*)())(intptr_t)exprSymbol.getAddress(); //casting a function to the right type to call it natively
-			fprintf(stderr, "Evaluated to %f\n", FP());
-
-			exitOnErr(RT->remove());
 		}
 		return true;
 	}
