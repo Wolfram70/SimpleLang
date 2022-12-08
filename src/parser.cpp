@@ -18,6 +18,51 @@ std::map<std::string, AllocaInst*> namedValues;
 std::map<std::string, std::unique_ptr<PrototypeAST>> functionProtos;
 ExitOnError exitOnErr;
 
+std::unique_ptr<DIBuilder> DBuilder;
+
+struct DebugInfo
+{
+  DICompileUnit *theCU;
+  DIType* doubleType;
+  std::vector<DIScope*> lexicalBlocks;
+
+  void emitLocation(ExprAST* AST);
+  DIType* getDoubleTy();
+};
+
+DIType* DebugInfo::getDoubleTy()
+{
+  if(doubleType)
+  {
+    return doubleType;
+  }
+  else
+  {
+    doubleType = DBuilder->createBasicType("double", 64, dwarf::DW_ATE_float);
+    return doubleType;
+  }
+}
+
+void DebugInfo::emitLocation(ExprAST* AST)
+{
+  if(!AST)
+  {
+    return Builder->SetCurrentDebugLocation(DebugLoc());
+  }
+  DIScope *scope;
+  if(lexicalBlocks.empty())
+  {
+    scope = theCU;
+  }
+  else
+  {
+    scope = lexicalBlocks.back();
+  }
+  Builder->SetCurrentDebugLocation(DILocation::get(scope->getContext(), AST->getLine(), AST->getCol(), scope));
+}
+
+DebugInfo debugInfo;
+
 GenerateCode codeGenerator;
 
 int tempResolveTopLvlExpr = 0;
@@ -279,6 +324,7 @@ std::unique_ptr<ExprAST> parseBinOpRHS(int exprPrec, std::unique_ptr<ExprAST> LH
 		}
 
 		int binOp = curTok;
+    SourceLocation binLoc = curLoc;
 		getNextToken();
 
 		auto RHS = parseUnaryExpr();
@@ -300,7 +346,7 @@ std::unique_ptr<ExprAST> parseBinOpRHS(int exprPrec, std::unique_ptr<ExprAST> LH
 			}
 		}
 
-		LHS = std::make_unique<BinaryExprAST>(binOp, std::move(LHS), std::move(RHS));
+		LHS = std::make_unique<BinaryExprAST>(binLoc, binOp, std::move(LHS), std::move(RHS));
 	}
 }
 
@@ -319,11 +365,12 @@ std::unique_ptr<ExprAST> parseExpression()
 std::unique_ptr<ExprAST> parseIdentifierExpr()
 {
 	std::string idName = identifierStr;
+  SourceLocation litLoc = curLoc;
 
 	getNextToken();
 	if (curTok != '(')
 	{
-		return std::make_unique<VariableExprAST>(idName);
+		return std::make_unique<VariableExprAST>(litLoc, idName);
 	}
 	getNextToken();
 
@@ -358,11 +405,13 @@ std::unique_ptr<ExprAST> parseIdentifierExpr()
 
 	getNextToken();
 
-	return std::make_unique<CallExprAST>(idName, std::move(args));
+	return std::make_unique<CallExprAST>(litLoc, idName, std::move(args));
 }
 
 std::unique_ptr<ExprAST> parseIfExpr()
 {
+  SourceLocation ifLoc = curLoc;
+
 	getNextToken();
 
 	auto cond = parseExpression();
@@ -409,12 +458,14 @@ std::unique_ptr<ExprAST> parseIfExpr()
 		return nullptr;
 	}
 
-	return std::make_unique<IfExprAST>(std::move(cond), std::move(then), std::move(_else));
+	return std::make_unique<IfExprAST>(ifLoc, std::move(cond), std::move(then), std::move(_else));
 }
 
 std::unique_ptr<PrototypeAST> parseProtoype()
 {
 	std::string fnName;
+
+  SourceLocation fnLoc = curLoc;
 
 	unsigned kind = 0;
 	unsigned binaryPrecedence = 30;
@@ -474,7 +525,7 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 
 	while (tok == tok_identifier)
 	{
-		argNames.push_back(std::move(std::make_unique<VariableExprAST>(identifierStr)));
+		argNames.push_back(std::move(std::make_unique<VariableExprAST>(fnLoc, identifierStr)));
 		argString.push_back(identifierStr);
 
 		tok = getNextToken();
@@ -499,7 +550,7 @@ std::unique_ptr<PrototypeAST> parseProtoype()
 		return logErrorP("Invalid number of operands for an operator");
 	}
 
-	return std::make_unique<PrototypeAST>(fnName, std::move(argNames), std::move(argString), kind != 0, binaryPrecedence);
+	return std::make_unique<PrototypeAST>(fnLoc, fnName, std::move(argNames), std::move(argString), kind != 0, binaryPrecedence);
 }
 
 std::unique_ptr<FunctionAST> parseDefinition()
@@ -529,9 +580,11 @@ std::unique_ptr<PrototypeAST> parseExtern()
 
 std::unique_ptr<FunctionAST> parseTopLvlExpr()
 {
+  SourceLocation exprLoc = curLoc;
+
 	if (auto exp = std::move(parseExpression()))
 	{
-		auto proto = std::make_unique<PrototypeAST>("__anon_expr", std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
+		auto proto = std::make_unique<PrototypeAST>(exprLoc, "main", std::move(std::vector<std::unique_ptr<ExprAST>>()), std::move(std::vector<std::string>()));
 		return std::make_unique<FunctionAST>(std::move(proto), std::move(exp));
 	}
 
@@ -545,6 +598,21 @@ AllocaInst* createEntryBlockAlloca(Function* theFunction, std::string varName)
 	IRBuilder<> tmpB(&theFunction->getEntryBlock(), theFunction->getEntryBlock().begin());
 
 	return tmpB.CreateAlloca(Type::getDoubleTy(*theContext), 0, varName);
+}
+
+DISubroutineType* createFunctionType(unsigned numArgs)
+{
+  SmallVector<Metadata *, 8> eltTypes;
+  DIType *doubleType = debugInfo.getDoubleTy();
+
+  eltTypes.push_back(doubleType);
+
+  for(unsigned i = 0, e = numArgs; i != e; i++)
+  {
+    eltTypes.push_back(doubleType);
+  }
+
+  return DBuilder->createSubroutineType(DBuilder->getOrCreateTypeArray(eltTypes));
 }
 
 Function* getFunction(std::string name)
@@ -573,6 +641,7 @@ Value* logErrorV(const char* str)
 
 Value* GenerateCode::codegen(NumberExprAST* a)
 {
+  debugInfo.emitLocation(a);
 	return ConstantFP::get(*theContext, APFloat(a->val));
 }
 
@@ -584,11 +653,15 @@ Value* GenerateCode::codegen(VariableExprAST* a)
 		logErrorV("Unknown variable name.");
 		return nullptr;
 	}
+
+  debugInfo.emitLocation(a);
 	return Builder->CreateLoad(A->getAllocatedType(), A, llvm::StringRef(a->name));
 }
 
 Value* GenerateCode::codegen(BinaryExprAST* a)
 {
+  debugInfo.emitLocation(a);
+
 	if(a->op == ':')
 	{
 		Value* L = a->LHS->codegen(this);
@@ -672,11 +745,14 @@ Value* GenerateCode::codegen(UnaryExprAST* a)
 		return logErrorV("Unknown unary operator");
 	}
 	
+  debugInfo.emitLocation(a);
 	return Builder->CreateCall(F, operandV, "unop");
 }
 
 Value* GenerateCode::codegen(CallExprAST* a)
 {
+  debugInfo.emitLocation(a);
+
 	Function *calleeF = getFunction(a->callee);
 	// Function *calleeF = theModule->getFunction(a->callee);
 	if(!calleeF)
@@ -704,6 +780,8 @@ Value* GenerateCode::codegen(CallExprAST* a)
 
 Value* GenerateCode::codegen(IfExprAST* a)
 {
+  debugInfo.emitLocation(a);
+
 	Value *condV = a->cond->codegen(this);
 	if(!condV)
 	{
@@ -763,6 +841,8 @@ Value* GenerateCode::codegen(ForExprAST* a)
 	BasicBlock *preHeaderBB = Builder->GetInsertBlock();
 	
 	AllocaInst* alloca = createEntryBlockAlloca(theFunction, a->varName);
+
+  debugInfo.emitLocation(a);
 
 	Value* startVal = a->start->codegen(this);
 	if(!startVal)
@@ -873,6 +953,8 @@ Value* GenerateCode::codegen(VarExprAST* a)
 		init.release();
 	}
 
+  debugInfo.emitLocation(a);
+
 	Value *bodyVal = a->body->codegen(this);
 	if(!bodyVal)
 	{
@@ -933,26 +1015,57 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 	BasicBlock *BB = BasicBlock::Create(*theContext, "entry:", theFunction);
 	Builder->SetInsertPoint(BB);
 
+  DIFile *unit = DBuilder->createFile(debugInfo.theCU->getFilename(), debugInfo.theCU->getDirectory());
+  DIScope *fContext = unit;
+
+  unsigned lineNo = p.getLine();
+  unsigned scopeLine = lineNo;
+
+  DISubprogram *SP = DBuilder->createFunction(fContext, p.getName(), StringRef(), unit, lineNo, createFunctionType(theFunction->arg_size()), scopeLine, DINode::FlagPrototyped, DISubprogram::SPFlagDefinition);
+
+  theFunction->setSubprogram(SP);
+
+  debugInfo.lexicalBlocks.push_back(SP);
+  debugInfo.emitLocation(nullptr);
+
 	namedValues.clear();
+  unsigned argidx = 0;
 	for(auto &arg : theFunction->args())
 	{
 		AllocaInst* alloca = createEntryBlockAlloca(theFunction, arg.getName().str());
+
+    DILocalVariable *D = DBuilder->createParameterVariable(SP, arg.getName(), ++argidx, unit, lineNo, debugInfo.getDoubleTy(), true);
+
+    DBuilder->insertDeclare(alloca, D, DBuilder->createExpression(), DILocation::get(SP->getContext(), lineNo, 0, SP), Builder->GetInsertBlock());
+
 		Builder->CreateStore(&arg, alloca);
 		namedValues[arg.getName().str()] = alloca;
 	}
+
+  debugInfo.emitLocation(a->body.get());
 
 	if(Value *retVal = a->body->codegen(this))
 	{
 		Builder->CreateRet(retVal);
 
+    debugInfo.lexicalBlocks.pop_back();
+
 		verifyFunction(*theFunction);
 
-		theFPM->run(*theFunction);
+		//theFPM->run(*theFunction);
 
 		return theFunction;
 	}
 
 	theFunction->eraseFromParent();
+
+  if(p.isBinaryOp())
+  {
+    binOpPrecedence.erase(a->proto->getOperatorName());
+  }
+
+  debugInfo.lexicalBlocks.pop_back();
+
 	return nullptr;
 }
 
@@ -961,16 +1074,19 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 
 //Driver Code:: (Until I figure out how to share the llvm::Context with other files)
 
-void initialize()
+
+//gotta change initialize() function
+
+void compileToObject()
 {
-	InitializeAllTargetInfos();
+	/*InitializeAllTargetInfos();
   InitializeAllTargets();
   InitializeAllTargetMCs();
   InitializeAllAsmParsers();
-  InitializeAllAsmPrinters();
+  InitializeAllAsmPrinters();*/
 
   auto TargetTriple = sys::getDefaultTargetTriple();
-  theModule->setTargetTriple(TargetTriple);
+  //theModule->setTargetTriple(TargetTriple);
 
   std::string Error;
   auto Target = TargetRegistry::lookupTarget(TargetTriple, Error);
@@ -988,7 +1104,7 @@ void initialize()
   auto RM = Optional<Reloc::Model>();
   auto theTargetMachine = Target->createTargetMachine(TargetTriple, CPU, Features, opt, RM);
 
-  theModule->setDataLayout(theTargetMachine->createDataLayout());
+  //theModule->setDataLayout(theTargetMachine->createDataLayout());
 
   auto Filename  = "output.o";
   std::error_code EC;
@@ -1015,10 +1131,31 @@ void initialize()
   outs() << "Wrote "<< Filename << "\n";
 }
 
+void initialize()
+{
+  theModule->addModuleFlag(Module::Warning, "Debug Info Version", DEBUG_METADATA_VERSION);
+
+  if(Triple(sys::getProcessTriple()).isOSDarwin())
+  {
+    theModule->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 2);
+  }
+
+  DBuilder = std::make_unique<DIBuilder>(*theModule);
+
+  debugInfo.theCU = DBuilder->createCompileUnit(dwarf::DW_LANG_C, DBuilder->createFile("fib.ks", "."), "SimpleLang Compiler", true, "", 0);
+}
+
 void initialiseModule()
 {
+  InitializeNativeTarget();
+  InitializeNativeTargetAsmPrinter();
+  InitializeNativeTargetAsmParser();
+
+  theJIT = exitOnErr(llvm::orc::SimpleJIT::create());
+
 	theContext = std::make_unique<LLVMContext>();
 	theModule = std::make_unique<Module>("FirstLang", *theContext);
+  theModule->setDataLayout(theJIT->getDataLayout());
 	Builder = std::make_unique<IRBuilder<>>(*theContext);
 
 	theFPM = std::make_unique<legacy::FunctionPassManager>(theModule.get());
@@ -1037,15 +1174,18 @@ bool genDefinition()
 	{
 		if(auto *fnIR = fnAST->Codegen(&codeGenerator))
 		{
-			fprintf(stderr, "Read function definition:\n");
-			fnIR->print(errs());
+			//fprintf(stderr, "Read function definition:\n");
+			//fnIR->print(errs());
 			// fnIR->viewCFG();
-			fprintf(stderr, "\n");
+			//fprintf(stderr, "\n");
 		}
+    else
+    {
+      fprintf(stderr, "Error reading function definition.");
+    }
 		return true;
 	}
-
-	return false;
+  return false;
 }
 
 bool genExtern()
@@ -1054,11 +1194,15 @@ bool genExtern()
 	{
 		if(auto *fnIR = protoAST->Codegen(&codeGenerator))
 		{
-			fprintf(stderr, "Read extern function:\n");
-			fnIR->print(errs());
-			fprintf(stderr, "\n");
+			//fprintf(stderr, "Read extern function:\n");
+			//fnIR->print(errs());
+			//fprintf(stderr, "\n");
 			functionProtos[protoAST->getName()] = std::move(protoAST);
 		}
+    else
+    {
+      fprintf(stderr, "Error reading extern.");
+    }
 		return true;
 	}
 
@@ -1071,10 +1215,14 @@ bool genTopLvlExpr()
 	{
 		if(auto *fnIR = fnAST->Codegen(&codeGenerator))
 		{
-			fprintf(stderr, "Read top-level expression:\n");
-			fnIR->print(errs());
-			fprintf(stderr, "\n");
+			//fprintf(stderr, "Read top-level expression:\n");
+			//fnIR->print(errs());
+			//fprintf(stderr, "\n");
 		}
+    else
+    {
+      fprintf(stderr, "Error generating code for top level expression.");
+    }
 		return true;
 	}
 
@@ -1083,5 +1231,6 @@ bool genTopLvlExpr()
 
 void printALL()
 {
+  DBuilder->finalize();
 	theModule->print(errs(), nullptr);
 }

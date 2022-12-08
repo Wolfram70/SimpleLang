@@ -7,13 +7,33 @@
 std::string identifierStr;
 double numVal;
 
+SourceLocation curLoc;
+SourceLocation lexLoc = {1, 0};
+
+
+extern int advance()
+{
+  int lastChar = getchar();
+
+  if(lastChar == '\n' || lastChar == '\r')
+  {
+    lexLoc.line++;
+    lexLoc.col = 0;
+  }
+  else
+  {
+    lexLoc.col++;
+  }
+  return lastChar;
+}
+
 extern int getToken()
 {
 	static char lastChar = ' ';
 
 	while (isspace(lastChar))
 	{
-		lastChar = getchar();
+		lastChar = advance();
 	}
 
 	if (isalpha(lastChar))
@@ -21,7 +41,7 @@ extern int getToken()
 		identifierStr.erase();
 		identifierStr.push_back(lastChar);
 
-		while (isalnum(lastChar = getchar()))
+		while (isalnum(lastChar = advance()))
 		{
 			identifierStr.push_back(lastChar);
 		}
@@ -89,7 +109,7 @@ extern int getToken()
 		do
 		{
 			numStr.push_back(lastChar);
-			lastChar = getchar();
+			lastChar = advance();
 		} while (isdigit(lastChar) || lastChar == '.');
 
 		numVal = strtod(numStr.c_str(), 0);
@@ -113,6 +133,6 @@ extern int getToken()
 	}
 
 	int thisChar = lastChar;
-	lastChar = getchar();
+	lastChar = advance();
 	return thisChar;
 }

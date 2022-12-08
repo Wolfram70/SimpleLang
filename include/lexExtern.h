@@ -21,7 +21,15 @@ enum Token
 	tok_in = -16,
 };
 
+struct SourceLocation
+{
+  int line;
+  int col;
+};
+
 extern double numVal;
 extern std::string identifierStr;
 extern char curTok;
 extern std::map<char, int> binOpPrecedence;
+extern SourceLocation curLoc;
+extern SourceLocation lexLoc;

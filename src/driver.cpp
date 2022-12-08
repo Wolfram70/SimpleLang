@@ -11,6 +11,7 @@ extern bool genExtern();
 extern bool genTopLvlExpr();
 extern void printALL();
 extern void initialize();
+extern void compileToObject();
 
 static void handleDefinition()
 {
@@ -45,7 +46,7 @@ static void mainLoop()
 			case tok_eof:
 				return;
 			case ';':
-				fprintf(stderr, "Ready>>");	
+				//fprintf(stderr, "Ready>>");	
 				getNextToken();
 				break;
 			case tok_def:
@@ -61,7 +62,7 @@ static void mainLoop()
 				handleTopLvlExpr();
 				break;
 			default:
-				fprintf(stderr, "Ready>>");
+				//fprintf(stderr, "Ready>>");
 				getNextToken();
 				break;
 		}
@@ -100,14 +101,19 @@ int main()
 	binOpPrecedence['-'] = 20;
 	binOpPrecedence['*'] = 40;
 
-	fprintf(stderr, "Ready>>");
+	//fprintf(stderr, "Ready>>");
 	getNextToken();
 
 	initialiseModule();
+  initialize();
 
 	mainLoop();
+  
+  printALL();
 
-  initialize();
+  compileToObject();
+
+  //initialize();
 
 	return 0;
 }
