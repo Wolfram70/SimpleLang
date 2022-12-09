@@ -18,51 +18,6 @@ std::map<std::string, AllocaInst*> namedValues;
 std::map<std::string, std::unique_ptr<PrototypeAST>> functionProtos;
 ExitOnError exitOnErr;
 
-std::unique_ptr<DIBuilder> DBuilder;
-
-struct DebugInfo
-{
-  DICompileUnit *theCU;
-  DIType* doubleType;
-  std::vector<DIScope*> lexicalBlocks;
-
-  void emitLocation(ExprAST* AST);
-  DIType* getDoubleTy();
-};
-
-DIType* DebugInfo::getDoubleTy()
-{
-  if(doubleType)
-  {
-    return doubleType;
-  }
-  else
-  {
-    doubleType = DBuilder->createBasicType("double", 64, dwarf::DW_ATE_float);
-    return doubleType;
-  }
-}
-
-void DebugInfo::emitLocation(ExprAST* AST)
-{
-  if(!AST)
-  {
-    return Builder->SetCurrentDebugLocation(DebugLoc());
-  }
-  DIScope *scope;
-  if(lexicalBlocks.empty())
-  {
-    scope = theCU;
-  }
-  else
-  {
-    scope = lexicalBlocks.back();
-  }
-  Builder->SetCurrentDebugLocation(DILocation::get(scope->getContext(), AST->getLine(), AST->getCol(), scope));
-}
-
-DebugInfo debugInfo;
-
 GenerateCode codeGenerator;
 
 int tempResolveTopLvlExpr = 0;
@@ -600,21 +555,6 @@ AllocaInst* createEntryBlockAlloca(Function* theFunction, std::string varName)
 	return tmpB.CreateAlloca(Type::getDoubleTy(*theContext), 0, varName);
 }
 
-DISubroutineType* createFunctionType(unsigned numArgs)
-{
-  SmallVector<Metadata *, 8> eltTypes;
-  DIType *doubleType = debugInfo.getDoubleTy();
-
-  eltTypes.push_back(doubleType);
-
-  for(unsigned i = 0, e = numArgs; i != e; i++)
-  {
-    eltTypes.push_back(doubleType);
-  }
-
-  return DBuilder->createSubroutineType(DBuilder->getOrCreateTypeArray(eltTypes));
-}
-
 Function* getFunction(std::string name)
 {
 	if(auto *F = theModule->getFunction(name))
@@ -641,7 +581,6 @@ Value* logErrorV(const char* str)
 
 Value* GenerateCode::codegen(NumberExprAST* a)
 {
-  debugInfo.emitLocation(a);
 	return ConstantFP::get(*theContext, APFloat(a->val));
 }
 
@@ -654,14 +593,11 @@ Value* GenerateCode::codegen(VariableExprAST* a)
 		return nullptr;
 	}
 
-  debugInfo.emitLocation(a);
 	return Builder->CreateLoad(A->getAllocatedType(), A, llvm::StringRef(a->name));
 }
 
 Value* GenerateCode::codegen(BinaryExprAST* a)
 {
-  debugInfo.emitLocation(a);
-
 	if(a->op == ':')
 	{
 		Value* L = a->LHS->codegen(this);
@@ -745,14 +681,11 @@ Value* GenerateCode::codegen(UnaryExprAST* a)
 		return logErrorV("Unknown unary operator");
 	}
 	
-  debugInfo.emitLocation(a);
 	return Builder->CreateCall(F, operandV, "unop");
 }
 
 Value* GenerateCode::codegen(CallExprAST* a)
 {
-  debugInfo.emitLocation(a);
-
 	Function *calleeF = getFunction(a->callee);
 	// Function *calleeF = theModule->getFunction(a->callee);
 	if(!calleeF)
@@ -780,8 +713,6 @@ Value* GenerateCode::codegen(CallExprAST* a)
 
 Value* GenerateCode::codegen(IfExprAST* a)
 {
-  debugInfo.emitLocation(a);
-
 	Value *condV = a->cond->codegen(this);
 	if(!condV)
 	{
@@ -841,8 +772,6 @@ Value* GenerateCode::codegen(ForExprAST* a)
 	BasicBlock *preHeaderBB = Builder->GetInsertBlock();
 	
 	AllocaInst* alloca = createEntryBlockAlloca(theFunction, a->varName);
-
-  debugInfo.emitLocation(a);
 
 	Value* startVal = a->start->codegen(this);
 	if(!startVal)
@@ -953,8 +882,6 @@ Value* GenerateCode::codegen(VarExprAST* a)
 		init.release();
 	}
 
-  debugInfo.emitLocation(a);
-
 	Value *bodyVal = a->body->codegen(this);
 	if(!bodyVal)
 	{
@@ -1015,18 +942,8 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 	BasicBlock *BB = BasicBlock::Create(*theContext, "entry:", theFunction);
 	Builder->SetInsertPoint(BB);
 
-  DIFile *unit = DBuilder->createFile(debugInfo.theCU->getFilename(), debugInfo.theCU->getDirectory());
-  DIScope *fContext = unit;
-
   unsigned lineNo = p.getLine();
   unsigned scopeLine = lineNo;
-
-  DISubprogram *SP = DBuilder->createFunction(fContext, p.getName(), StringRef(), unit, lineNo, createFunctionType(theFunction->arg_size()), scopeLine, DINode::FlagPrototyped, DISubprogram::SPFlagDefinition);
-
-  theFunction->setSubprogram(SP);
-
-  debugInfo.lexicalBlocks.push_back(SP);
-  debugInfo.emitLocation(nullptr);
 
 	namedValues.clear();
   unsigned argidx = 0;
@@ -1034,25 +951,17 @@ Function* GenerateCode::Codegen(FunctionAST* a)
 	{
 		AllocaInst* alloca = createEntryBlockAlloca(theFunction, arg.getName().str());
 
-    DILocalVariable *D = DBuilder->createParameterVariable(SP, arg.getName(), ++argidx, unit, lineNo, debugInfo.getDoubleTy(), true);
-
-    DBuilder->insertDeclare(alloca, D, DBuilder->createExpression(), DILocation::get(SP->getContext(), lineNo, 0, SP), Builder->GetInsertBlock());
-
 		Builder->CreateStore(&arg, alloca);
 		namedValues[arg.getName().str()] = alloca;
 	}
-
-  debugInfo.emitLocation(a->body.get());
 
 	if(Value *retVal = a->body->codegen(this))
 	{
 		Builder->CreateRet(retVal);
 
-    debugInfo.lexicalBlocks.pop_back();
-
 		verifyFunction(*theFunction);
 
-		//theFPM->run(*theFunction);
+		theFPM->run(*theFunction);
 
 		return theFunction;
 	}
@@ -1063,8 +972,6 @@ Function* GenerateCode::Codegen(FunctionAST* a)
   {
     binOpPrecedence.erase(a->proto->getOperatorName());
   }
-
-  debugInfo.lexicalBlocks.pop_back();
 
 	return nullptr;
 }
@@ -1133,16 +1040,12 @@ void compileToObject()
 
 void initialize()
 {
-  theModule->addModuleFlag(Module::Warning, "Debug Info Version", DEBUG_METADATA_VERSION);
+  /*theModule->addModuleFlag(Module::Warning, "Debug Info Version", DEBUG_METADATA_VERSION);
 
   if(Triple(sys::getProcessTriple()).isOSDarwin())
   {
     theModule->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 2);
-  }
-
-  DBuilder = std::make_unique<DIBuilder>(*theModule);
-
-  debugInfo.theCU = DBuilder->createCompileUnit(dwarf::DW_LANG_C, DBuilder->createFile("fib.ks", "."), "SimpleLang Compiler", true, "", 0);
+  }*/
 }
 
 void initialiseModule()
@@ -1231,6 +1134,6 @@ bool genTopLvlExpr()
 
 void printALL()
 {
-  DBuilder->finalize();
+  //DBuilder->finalize();
 	theModule->print(errs(), nullptr);
 }
