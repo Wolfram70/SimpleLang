@@ -556,7 +556,7 @@ Value *logErrorV(const char *str) {
 }
 
 Value *GenerateCode::codegen(NumberExprAST *a) {
-  debugInfo.emitLocation(a);
+ if(printDebug) debugInfo.emitLocation(a);
   return ConstantFP::get(*theContext, APFloat(a->val));
 }
 
@@ -567,13 +567,13 @@ Value *GenerateCode::codegen(VariableExprAST *a) {
     return nullptr;
   }
 
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
   return Builder->CreateLoad(A->getAllocatedType(), A,
                              llvm::StringRef(a->name));
 }
 
 Value *GenerateCode::codegen(BinaryExprAST *a) {
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
 
   if (a->op == ':') {
     Value *L = a->LHS->codegen(this);
@@ -647,12 +647,12 @@ Value *GenerateCode::codegen(UnaryExprAST *a) {
     return logErrorV("Unknown unary operator");
   }
 
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
   return Builder->CreateCall(F, operandV, "unop");
 }
 
 Value *GenerateCode::codegen(CallExprAST *a) {
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
 
   Function *calleeF = getFunction(a->callee);
   // Function *calleeF = theModule->getFunction(a->callee);
@@ -676,7 +676,7 @@ Value *GenerateCode::codegen(CallExprAST *a) {
 }
 
 Value *GenerateCode::codegen(IfExprAST *a) {
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
 
   Value *condV = a->cond->codegen(this);
   if (!condV) {
@@ -734,7 +734,7 @@ Value *GenerateCode::codegen(ForExprAST *a) {
 
   AllocaInst *alloca = createEntryBlockAlloca(theFunction, a->varName);
 
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
 
   Value *startVal = a->start->codegen(this);
   if (!startVal) {
@@ -834,7 +834,7 @@ Value *GenerateCode::codegen(VarExprAST *a) {
     init.release();
   }
 
-  debugInfo.emitLocation(a);
+  if(printDebug) debugInfo.emitLocation(a);
 
   Value *bodyVal = a->body->codegen(this);
   if (!bodyVal) {
@@ -909,7 +909,7 @@ Function *GenerateCode::Codegen(FunctionAST *a) {
   theFunction->setSubprogram(SP);
 
   debugInfo.lexicalBlocks.push_back(SP);
-  debugInfo.emitLocation(nullptr);
+  if(printDebug) debugInfo.emitLocation(nullptr);
 
   namedValues.clear();
   unsigned argidx = 0;
@@ -929,7 +929,7 @@ Function *GenerateCode::Codegen(FunctionAST *a) {
     namedValues[arg.getName().str()] = alloca;
   }
 
-  debugInfo.emitLocation(a->body.get());
+  if(printDebug) debugInfo.emitLocation(a->body.get());
 
   if (Value *retVal = a->body->codegen(this)) {
     Builder->CreateRet(retVal);
@@ -938,7 +938,7 @@ Function *GenerateCode::Codegen(FunctionAST *a) {
 
     verifyFunction(*theFunction);
 
-    // theFPM->run(*theFunction);
+    if(!enableDebug) theFPM->run(*theFunction);
 
     return theFunction;
   }
@@ -991,7 +991,7 @@ InitializeAllAsmPrinters();*/
 
   // theModule->setDataLayout(theTargetMachine->createDataLayout());
 
-  auto Filename = "output.o";
+  auto Filename = outFileName;
   std::error_code EC;
   raw_fd_ostream dest(Filename, EC, sys::fs::OF_None);
 
@@ -1025,8 +1025,8 @@ void initialize() {
   DBuilder = std::make_unique<DIBuilder>(*theModule);
 
   debugInfo.theCU = DBuilder->createCompileUnit(
-      dwarf::DW_LANG_C, DBuilder->createFile("fib.ks", "."),
-      "SimpleLang Compiler", true, "", 0);
+      dwarf::DW_LANG_C, DBuilder->createFile(&fileName[0], "."),
+      "SimpleLang Compiler", !enableDebug, "", 0);
 }
 
 void initialiseModule() {
@@ -1098,6 +1098,6 @@ bool genTopLvlExpr() {
 }
 
 void printALL() {
-  DBuilder->finalize();
+  if(printDebug && enableDebug) DBuilder->finalize();
   theModule->print(errs(), nullptr);
 }
