@@ -1,5 +1,6 @@
 #include <map>
 #include <string>
+#include <fstream>
 
 enum Token
 {
@@ -33,3 +34,5 @@ extern char curTok;
 extern std::map<char, int> binOpPrecedence;
 extern SourceLocation curLoc;
 extern SourceLocation lexLoc;
+
+extern std::ifstream file;

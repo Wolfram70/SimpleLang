@@ -5,6 +5,9 @@ extern std::unique_ptr<FunctionAST> parseDefinition();
 extern std::unique_ptr<PrototypeAST> parseExtern();
 extern std::unique_ptr<FunctionAST> parseTopLvlExpr();
 
+std::ifstream file;
+std::string fileName;
+
 extern void initialiseModule();
 extern bool genDefinition();
 extern bool genExtern();
@@ -92,8 +95,24 @@ extern "C" DLLEXPORT double clear() {
 	return 0;
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  if(argc > 2)
+  {
+    std::cout << "Invalid number of arguments" << std::endl;
+    return 1;
+  }
+
+  fileName = argv[1];
+
+  file.open(fileName, std::ios::in);
+
+  if(!file.is_open())
+  {
+    std::cout << "Could not open file \"" << fileName << "\"" << std::endl;
+    return 1;
+  }
+
 	binOpPrecedence[':'] = 1;
 	binOpPrecedence['='] = 2;
 	binOpPrecedence['<'] = 10;
