@@ -9,7 +9,7 @@ std::ifstream file;
 std::string outFileName = "out.o";
 std::string fileName;
 
-bool enableDebug = true;
+bool enableDebug = false;
 bool printDebug = false;
 bool printIR = true;
 
@@ -18,7 +18,7 @@ extern bool genDefinition();
 extern bool genExtern();
 extern bool genTopLvlExpr();
 extern void printALL();
-extern void initialize();
+extern void initializeDwarf();
 extern void compileToObject();
 
 static void handleDefinition() {
@@ -108,16 +108,29 @@ int main(int argc, char **argv) {
             arg = argv[i];
             if (arg == "debug") {
               enableDebug = true;
+              printDebug = true;
             } else if (arg == "release") {
-              std::cout << "Disabled debug" << std::endl;
               enableDebug = false;
+              printDebug = false;
             } else {
               std::cout << "Invalid argument for -m" << std::endl;
               return 1;
             }
             break;
-          case 'e':
-            printDebug = true;
+          case 'p':
+            i++;
+            arg = argv[i];
+            if (arg == "ir") {
+              printIR = true;
+            } else if (arg == "noir") {
+              printIR = false;
+            } else {
+              std::cout << "Invalid argument for -p" << std::endl;
+              return 1;
+            }
+            break;
+          case 'n':
+            printDebug = false;
             break;
           case 'o':
             i++;
@@ -159,7 +172,7 @@ int main(int argc, char **argv) {
   getNextToken();
 
   initialiseModule();
-  initialize();
+  if(printDebug) initializeDwarf();
 
   mainLoop();
 
